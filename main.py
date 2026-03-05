@@ -6,7 +6,6 @@ from typing import Optional, List
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi import Header 
 from pydantic import BaseModel, Field
 import psycopg
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,14 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 INGEST_KEY = os.getenv("INGEST_KEY")
-ML_KEY = os.getenv("ML_KEY")  # poner en Render env vars
 
-def auth_ml(x_ml_key: Optional[str]):
-    # Si no defines ML_KEY, no bloquea (modo dev)
-    if not ML_KEY:
-        return
-    if x_ml_key != ML_KEY:
-        raise HTTPException(status_code=401, detail="Invalid ML key")
 if not DATABASE_URL:
     raise RuntimeError("Falta DATABASE_URL en .env")
 if not INGEST_KEY:
@@ -68,15 +60,12 @@ def auth_ingest(x_ingest_key: Optional[str]):
 @app.get("/health")
 def health():
     return {"ok": True}
-
 @app.post("/api/ml/run")
 def ml_run(
     deviceId: Optional[str] = Query(None),
     limit: int = Query(5000, ge=50, le=50000),
     contamination: float = Query(0.05, ge=0.001, le=0.2),
-    x_ml_key: Optional[str] = Header(None),   # <-- AÑADE ESTO
 ):
-    auth_ml(x_ml_key)
     """
     Entrena IsolationForest con features simples:
     - duration_sec
