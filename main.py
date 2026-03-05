@@ -201,3 +201,40 @@ def metrics_daily(
         }
         for r in rows
     ]
+@app.get("/api/metrics/hourly")
+def metrics_hourly(
+    deviceId: Optional[str] = Query(None),
+    dateFrom: Optional[datetime] = Query(None),
+    dateTo: Optional[datetime] = Query(None),
+):
+    where = []
+    params = []
+
+    if deviceId:
+        where.append("device_id = %s")
+        params.append(deviceId)
+    if dateFrom:
+        where.append("start_at >= %s")
+        params.append(dateFrom)
+    if dateTo:
+        where.append("start_at < %s")
+        params.append(dateTo)
+
+    where_sql = ("where " + " and ".join(where)) if where else ""
+
+    sql = f"""
+    select
+      extract(hour from start_at)::int as hour_of_day,
+      count(*) as sessions_count
+    from public.sessions
+    {where_sql}
+    group by 1
+    order by 1;
+    """
+
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+    return [{"hour": r[0], "sessionsCount": r[1]} for r in rows]
