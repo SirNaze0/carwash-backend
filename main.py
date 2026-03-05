@@ -5,10 +5,18 @@ from typing import Optional, List
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 import psycopg
-
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 load_dotenv()
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # luego lo restringes a tu dominio
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 DATABASE_URL = os.getenv("DATABASE_URL")
 INGEST_KEY = os.getenv("INGEST_KEY")
 
