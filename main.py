@@ -161,6 +161,18 @@ def list_sessions(
         )
     return out
 
+@app.get("/api/sessions/next-id")
+def next_session_id(deviceId: str = Query(...)):
+    sql = """
+    select coalesce(max(session_id), 0) + 1
+    from public.sessions
+    where device_id = %s;
+    """
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (deviceId,))
+            next_id = cur.fetchone()[0]
+    return {"nextSessionId": int(next_id)}
 
 @app.get("/api/metrics/daily")
 def metrics_daily(
