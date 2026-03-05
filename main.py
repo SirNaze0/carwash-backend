@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from datetime import datetime
 from typing import Optional, List
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
