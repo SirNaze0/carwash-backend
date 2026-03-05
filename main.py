@@ -1,7 +1,8 @@
 import os
 from datetime import datetime
 from typing import Optional, List
-
+import pandas as pd
+from sklearn.ensemble import IsolationForest
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 import psycopg
@@ -61,7 +62,137 @@ def auth_ingest(x_ingest_key: Optional[str]):
 def health():
     return {"ok": True}
 
+@app.post("/api/ml/run")
+def ml_run(
+    deviceId: Optional[str] = Query(None),
+    limit: int = Query(5000, ge=50, le=50000),
+    contamination: float = Query(0.05, ge=0.001, le=0.2),  # % esperado de anomalías
+):
+    """
+    Entrena IsolationForest con features simples:
+    - duration_sec
+    - price
+    - hour_of_day
+    - day_of_week
+    Luego marca is_anomaly y anomaly_score en la tabla.
+    """
+    where = []
+    params = []
+    if deviceId:
+        where.append("device_id = %s")
+        params.append(deviceId)
 
+    where_sql = ("where " + " and ".join(where)) if where else ""
+
+    sql = f"""
+    select id, device_id, session_id, start_at, duration_sec, price
+    from public.sessions
+    {where_sql}
+    order by start_at desc
+    limit %s;
+    """
+    params.append(limit)
+
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+    if len(rows) < 50:
+        raise HTTPException(status_code=400, detail=f"Insuficientes datos para ML: {len(rows)}")
+
+    df = pd.DataFrame(rows, columns=["id", "device_id", "session_id", "start_at", "duration_sec", "price"])
+    df["start_at"] = pd.to_datetime(df["start_at"], utc=True)
+    df["hour_of_day"] = df["start_at"].dt.hour.astype(int)
+    df["day_of_week"] = df["start_at"].dt.dayofweek.astype(int)
+
+    # Features
+    X = df[["duration_sec", "price", "hour_of_day", "day_of_week"]].astype(float)
+
+    model = IsolationForest(
+        n_estimators=200,
+        random_state=42,
+        contamination=contamination
+    )
+    model.fit(X)
+
+    # IsolationForest: score_samples => mayor = más normal. Menor = más anómalo.
+    normality = model.score_samples(X)           # típico rango negativo
+    anomaly_score = (-normality)                 # mayor = más anómalo (más intuitivo)
+
+    preds = model.predict(X)  # -1 anomalía, 1 normal
+    is_anomaly = (preds == -1)
+
+    df["is_anomaly"] = is_anomaly
+    df["anomaly_score"] = anomaly_score
+
+    # Guardar en BD (update por id)
+    updates = [(bool(r.is_anomaly), float(r.anomaly_score), str(r.id)) for r in df.itertuples(index=False)]
+
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.executemany(
+                "update public.sessions set is_anomaly = %s, anomaly_score = %s where id = %s;",
+                updates
+            )
+        conn.commit()
+
+    total = len(df)
+    anom = int(df["is_anomaly"].sum())
+
+    # Top 10 anomalías (para ver rápido)
+    top = df.sort_values("anomaly_score", ascending=False).head(10)[
+        ["device_id", "session_id", "start_at", "duration_sec", "price", "anomaly_score"]
+    ].to_dict(orient="records")
+
+    return {
+        "status": "ok",
+        "deviceId": deviceId,
+        "rowsUsed": total,
+        "contamination": contamination,
+        "anomaliesFound": anom,
+        "topAnomalies": top
+    }
+@app.get("/api/ml/anomalies")
+def ml_anomalies(
+    deviceId: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=1000),
+):
+    where = ["is_anomaly = true"]
+    params = []
+
+    if deviceId:
+        where.append("device_id = %s")
+        params.append(deviceId)
+
+    where_sql = "where " + " and ".join(where)
+
+    sql = f"""
+    select device_id, session_id, start_at, end_at, duration_sec, price, anomaly_score
+    from public.sessions
+    {where_sql}
+    order by anomaly_score desc nulls last
+    limit %s;
+    """
+    params.append(limit)
+
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+    return [
+        {
+            "deviceId": r[0],
+            "sessionId": r[1],
+            "startAt": r[2],
+            "endAt": r[3],
+            "durationSec": r[4],
+            "price": float(r[5]),
+            "anomalyScore": r[6],
+        }
+        for r in rows
+    ]
 @app.post("/api/sessions", status_code=201)
 def create_session(payload: SessionIn, x_ingest_key: Optional[str] = Header(None)):
     auth_ingest(x_ingest_key)
