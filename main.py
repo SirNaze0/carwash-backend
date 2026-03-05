@@ -10,13 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # luego lo restringes a tu dominio
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 INGEST_KEY = os.getenv("INGEST_KEY")
 
@@ -27,7 +21,13 @@ if not INGEST_KEY:
 
 app = FastAPI(title="Carwash Backend", version="1.0.0")
 
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # luego lo restringes a tu dominio
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # ---------- Schemas ----------
 class SessionIn(BaseModel):
     deviceId: str = Field(..., example="carwash-01")
